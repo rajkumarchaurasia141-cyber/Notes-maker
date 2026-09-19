@@ -1,0 +1,6 @@
+{
+  "name": "NotesMaker App",
+  "description": "A professional newspaper-style A4 notes maker app with multi-column layout, rich formatting, custom fonts, and watermark support.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
