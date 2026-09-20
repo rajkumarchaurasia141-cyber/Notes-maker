@@ -20,8 +20,8 @@ class GreetingScreenshotTest {
   @get:Rule val composeTestRule = createComposeRule()
 
   @Test
-  fun greeting_screenshot() {
-    composeTestRule.setContent { MyApplicationTheme { Greeting("Robolectric") } }
+  fun app_screenshot() {
+    composeTestRule.setContent { MyApplicationTheme { NotesMakerApp() } }
 
     composeTestRule.onRoot().captureRoboImage(filePath = "src/test/screenshots/greeting.png")
   }

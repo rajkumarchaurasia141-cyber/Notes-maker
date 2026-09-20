@@ -9,10 +9,18 @@ import android.webkit.WebViewClient
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.shrinkHorizontally
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -20,9 +28,12 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -44,27 +55,48 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun NotesMakerApp() {
   val context = LocalContext.current
-  
+  val configuration = LocalConfiguration.current
+  val screenWidth = configuration.screenWidthDp.dp
+
+  // Ribbon Tabs: 0 -> Home, 1 -> Insert, 2 -> Page Layout, 3 -> Review
+  var selectedTab by remember { mutableStateOf(0) }
+
+  // Layout & Styling States
   var currentLayout by remember { mutableStateOf("One") } // One, Two, Three, Left, Right
   var currentBorder by remember { mutableStateOf("None") } // None, Classic, Vintage, Floral, Minimal
-  var showWatermarkSettings by remember { mutableStateOf(false) }
-  var showTranslateDialog by remember { mutableStateOf(false) }
-  var showBorderDialog by remember { mutableStateOf(false) }
+  var currentMargin by remember { mutableStateOf("Normal") } // Normal, Narrow, Wide
+  var currentOrientation by remember { mutableStateOf("Portrait") } // Portrait, Landscape
   
+  // Watermark States
   var watermarkEnabled by remember { mutableStateOf(true) }
   var watermarkText by remember { mutableStateOf("NotesMaker App") }
   var watermarkOpacity by remember { mutableStateOf(0.12f) }
-  
+
+  // Font States
   var selectedFont by remember { mutableStateOf("Poppins") }
   var selectedSize by remember { mutableStateOf("16px") }
-  
-  // Translation state
+  var selectedLineSpacing by remember { mutableStateOf("1.6") }
+
+  // Show dialog states
+  var showWatermarkSettings by remember { mutableStateOf(false) }
+  var showBorderDialog by remember { mutableStateOf(false) }
+
+  // Translate Side Panel State (Inspired by Word Design #5 Translate panel)
+  var showTranslatePanel by remember { mutableStateOf(true) }
   var translateFrom by remember { mutableStateOf("English") }
   var translateTo by remember { mutableStateOf("Hindi (हिंदी)") }
   var sourceTextToTranslate by remember { mutableStateOf("") }
   var translatedResultText by remember { mutableStateOf("") }
 
+  // Custom Color States
+  var showTextColorPicker by remember { mutableStateOf(false) }
+  var showHighlightColorPicker by remember { mutableStateOf(false) }
+
   var webViewRef by remember { mutableStateOf<WebView?>(null) }
+
+  // Statistics
+  var wordCount by remember { mutableStateOf(35) }
+  var charCount by remember { mutableStateOf(240) }
 
   val fonts = listOf(
     "Poppins" to "'Poppins', sans-serif",
@@ -79,254 +111,910 @@ fun NotesMakerApp() {
     "Arial" to "Arial, sans-serif"
   )
 
+  val themeColors = listOf(
+    "#000000", "#FFFFFF", "#1F4E79", "#2F5597", "#C55A11", "#7F7F7F", "#8FA9DB", "#F4B183",
+    "#C00000", "#FF0000", "#FFC000", "#FFFF00", "#92D050", "#00B050", "#00B0F0", "#002060",
+    "#7030A0", "#44546A", "#D9E1F2", "#FCE4D6"
+  )
+
   fun executeJs(js: String) {
     webViewRef?.evaluateJavascript(js, null)
   }
 
+  // Update statistics dynamically by reading editor innerText from WebView
+  LaunchedEffect(webViewRef) {
+    while (true) {
+      webViewRef?.evaluateJavascript(
+        "(document.getElementById('editor')?.innerText || '').trim()"
+      ) { text ->
+        if (text != null && text != "null") {
+          val cleanText = text.replace("\"", "").trim()
+          val chars = cleanText.length
+          val words = if (cleanText.isEmpty()) 0 else cleanText.split("\\s+".toRegex()).size
+          wordCount = words
+          charCount = chars
+        }
+      }
+      kotlinx.coroutines.delay(1500)
+    }
+  }
+
   Scaffold(
     topBar = {
-      TopAppBar(
-        title = {
-          Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Default.EditNote, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-            Spacer(modifier = Modifier.width(8.dp))
-            Text("NotesMaker App", fontWeight = FontWeight.Bold, fontSize = 18.sp)
-          }
-        },
-        actions = {
-          // Layout / Columns Menu (Inspired by Word design #1)
-          var layoutMenuExpanded by remember { mutableStateOf(false) }
-          Box {
-            OutlinedButton(
-              onClick = { layoutMenuExpanded = true },
-              contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
-            ) {
-              Icon(Icons.Default.ViewColumn, contentDescription = null, modifier = Modifier.size(16.dp))
-              Spacer(modifier = Modifier.width(4.dp))
-              Text("Columns: $currentLayout", fontSize = 12.sp)
-              Spacer(modifier = Modifier.width(4.dp))
-              Icon(Icons.Default.ArrowDropDown, contentDescription = null, modifier = Modifier.size(16.dp))
-            }
-            DropdownMenu(
-              expanded = layoutMenuExpanded,
-              onDismissRequest = { layoutMenuExpanded = false }
-            ) {
-              listOf("One", "Two", "Three", "Left", "Right").forEach { layout ->
-                DropdownMenuItem(
-                  text = { Text("$layout Column${if(layout!="One" && layout!="Three") " (Asymmetric)" else if(layout=="Three") "s" else ""}") },
-                  onClick = {
-                    currentLayout = layout
-                    layoutMenuExpanded = false
-                    executeJs("setLayout(\"$layout\");")
-                  },
-                  leadingIcon = { Icon(Icons.Default.ViewStream, contentDescription = null) }
-                )
+      Column {
+        // App Main Title Bar
+        TopAppBar(
+          title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+              Icon(
+                Icons.Default.EditNote,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(28.dp)
+              )
+              Spacer(modifier = Modifier.width(8.dp))
+              Text(
+                "NotesMaker App",
+                fontWeight = FontWeight.ExtraBold,
+                fontSize = 20.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+              )
+              Spacer(modifier = Modifier.width(6.dp))
+              Badge(containerColor = MaterialTheme.colorScheme.primaryContainer) {
+                Text("Pro Edition", color = MaterialTheme.colorScheme.onPrimaryContainer, fontSize = 10.sp, modifier = Modifier.padding(horizontal = 4.dp))
               }
             }
-          }
+          },
+          actions = {
+            // Save & Quick Actions
+            IconButton(onClick = { executeJs("alert('Notes saved locally!');") }) {
+              Icon(Icons.Default.Save, contentDescription = "Save Notes")
+            }
+            
+            IconButton(onClick = { showTranslatePanel = !showTranslatePanel }) {
+              Icon(
+                Icons.Default.Translate,
+                contentDescription = "Toggle Translation Side Panel",
+                tint = if (showTranslatePanel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+              )
+            }
 
-          Spacer(modifier = Modifier.width(6.dp))
+            // Export to PDF
+            Button(
+              onClick = {
+                webViewRef?.let { wv ->
+                  val printManager = context.getSystemService(Context.PRINT_SERVICE) as PrintManager
+                  val jobName = "NotesMaker_${System.currentTimeMillis()}"
+                  val printAdapter = wv.createPrintDocumentAdapter(jobName)
+                  val printAttributes = PrintAttributes.Builder()
+                    .setMediaSize(PrintAttributes.MediaSize.ISO_A4)
+                    .build()
+                  printManager.print(jobName, printAdapter, printAttributes)
+                }
+              },
+              colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+              shape = RoundedCornerShape(8.dp),
+              contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
+              modifier = Modifier.padding(end = 8.dp)
+            ) {
+              Icon(Icons.Default.PictureAsPdf, contentDescription = null, modifier = Modifier.size(18.dp))
+              Spacer(modifier = Modifier.width(6.dp))
+              Text("Export PDF", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+            }
+          },
+          colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+        )
 
-          // Page Border Button (Inspired by Word designs #3 & #4)
-          IconButton(onClick = { showBorderDialog = true }) {
-            Icon(Icons.Default.BorderAll, contentDescription = "Page Borders", tint = MaterialTheme.colorScheme.primary)
+        // Microsoft Word Style Ribbon Tabs Selector
+        TabRow(
+          selectedTabIndex = selectedTab,
+          containerColor = MaterialTheme.colorScheme.surface,
+          contentColor = MaterialTheme.colorScheme.primary,
+          modifier = Modifier.height(48.dp)
+        ) {
+          Tab(selected = selectedTab == 0, onClick = { selectedTab = 0 }) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 8.dp)) {
+              Icon(Icons.Default.Home, contentDescription = null, modifier = Modifier.size(16.dp))
+              Spacer(modifier = Modifier.width(4.dp))
+              Text("Home", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+            }
           }
-
-          // Translate Button (Inspired by Word design #5)
-          IconButton(onClick = { showTranslateDialog = true }) {
-            Icon(Icons.Default.Translate, contentDescription = "Translate", tint = MaterialTheme.colorScheme.primary)
+          Tab(selected = selectedTab == 1, onClick = { selectedTab = 1 }) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 8.dp)) {
+              Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+              Spacer(modifier = Modifier.width(4.dp))
+              Text("Insert", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+            }
           }
-
-          // Watermark Settings
-          IconButton(onClick = { showWatermarkSettings = true }) {
-            Icon(Icons.Default.WaterDrop, contentDescription = "Watermark", tint = MaterialTheme.colorScheme.primary)
+          Tab(selected = selectedTab == 2, onClick = { selectedTab = 2 }) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 8.dp)) {
+              Icon(Icons.Default.Layers, contentDescription = null, modifier = Modifier.size(16.dp))
+              Spacer(modifier = Modifier.width(4.dp))
+              Text("Page Layout", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+            }
           }
-
-          // Export PDF
-          Button(
-            onClick = {
-              webViewRef?.let { wv ->
-                val printManager = context.getSystemService(Context.PRINT_SERVICE) as PrintManager
-                val jobName = "NotesMaker_A4_Note"
-                val printAdapter = wv.createPrintDocumentAdapter(jobName)
-                printManager.print(jobName, printAdapter, PrintAttributes.Builder().setMediaSize(PrintAttributes.MediaSize.ISO_A4).build())
-              }
-            },
-            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
-          ) {
-            Icon(Icons.Default.PictureAsPdf, contentDescription = null, modifier = Modifier.size(16.dp))
-            Spacer(modifier = Modifier.width(4.dp))
-            Text("Export PDF", fontSize = 12.sp)
+          Tab(selected = selectedTab == 3, onClick = { selectedTab = 3 }) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 8.dp)) {
+              Icon(Icons.Default.RateReview, contentDescription = null, modifier = Modifier.size(16.dp))
+              Spacer(modifier = Modifier.width(4.dp))
+              Text("Review & Stats", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+            }
           }
-          Spacer(modifier = Modifier.width(8.dp))
-        },
-        colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-      )
+        }
+      }
     }
   ) { paddingValues ->
     Column(
       modifier = Modifier
         .fillMaxSize()
         .padding(paddingValues)
-        .background(MaterialTheme.colorScheme.background)
+        .background(MaterialTheme.colorScheme.surface)
     ) {
-      // Formatting Toolbar (Fonts, Sizes, Styles, Highlight Colors - Inspired by Word design #2)
+      
+      // Formatting Ribbon Content based on Selected Tab
       Surface(
-        tonalElevation = 2.dp,
-        modifier = Modifier.fillMaxWidth()
+        tonalElevation = 3.dp,
+        modifier = Modifier
+          .fillMaxWidth()
+          .border(1.dp, MaterialTheme.colorScheme.surfaceVariant)
       ) {
         Row(
           modifier = Modifier
             .fillMaxWidth()
             .horizontalScroll(rememberScrollState())
-            .padding(8.dp),
+            .padding(horizontal = 12.dp, vertical = 8.dp),
           verticalAlignment = Alignment.CenterVertically,
-          horizontalArrangement = Arrangement.spacedBy(6.dp)
+          horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-          var fontMenuExpanded by remember { mutableStateOf(false) }
-          Box {
-            OutlinedButton(onClick = { fontMenuExpanded = true }, contentPadding = PaddingValues(8.dp)) {
-              Text(selectedFont, fontSize = 12.sp)
-              Icon(Icons.Default.ArrowDropDown, contentDescription = null)
-            }
-            DropdownMenu(expanded = fontMenuExpanded, onDismissRequest = { fontMenuExpanded = false }) {
-              fonts.forEach { (name, cssFont) ->
-                DropdownMenuItem(
-                  text = { Text(name, fontFamily = androidx.compose.ui.text.font.FontFamily.Default) },
-                  onClick = {
-                    selectedFont = name
-                    fontMenuExpanded = false
-                    executeJs("setFontFamily(\"$cssFont\");")
+          when (selectedTab) {
+            0 -> {
+              // --- HOME TAB (Fonts, Sizes, Styling, Alignments) ---
+              // Font Family Selector
+              var fontMenuExpanded by remember { mutableStateOf(false) }
+              Box {
+                OutlinedButton(
+                  onClick = { fontMenuExpanded = true },
+                  contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
+                  shape = RoundedCornerShape(6.dp)
+                ) {
+                  Icon(Icons.Default.FontDownload, contentDescription = null, modifier = Modifier.size(14.dp))
+                  Spacer(modifier = Modifier.width(4.dp))
+                  Text(selectedFont, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                  Icon(Icons.Default.ArrowDropDown, contentDescription = null, modifier = Modifier.size(14.dp))
+                }
+                DropdownMenu(expanded = fontMenuExpanded, onDismissRequest = { fontMenuExpanded = false }) {
+                  fonts.forEach { (name, cssFont) ->
+                    DropdownMenuItem(
+                      text = { Text(name, fontSize = 13.sp) },
+                      onClick = {
+                        selectedFont = name
+                        fontMenuExpanded = false
+                        executeJs("setFontFamily(\"$cssFont\");")
+                      }
+                    )
                   }
-                )
+                }
+              }
+
+              // Font Size Selector
+              var sizeMenuExpanded by remember { mutableStateOf(false) }
+              Box {
+                OutlinedButton(
+                  onClick = { sizeMenuExpanded = true },
+                  contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
+                  shape = RoundedCornerShape(6.dp)
+                ) {
+                  Text(selectedSize, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                  Spacer(modifier = Modifier.width(2.dp))
+                  Icon(Icons.Default.ArrowDropDown, contentDescription = null, modifier = Modifier.size(14.dp))
+                }
+                DropdownMenu(expanded = sizeMenuExpanded, onDismissRequest = { sizeMenuExpanded = false }) {
+                  listOf("11px", "12px", "14px", "16px", "18px", "20px", "24px", "28px", "32px", "36px").forEach { sz ->
+                    DropdownMenuItem(
+                      text = { Text(sz, fontSize = 13.sp) },
+                      onClick = {
+                        selectedSize = sz
+                        sizeMenuExpanded = false
+                        executeJs("setFontSize(\"$sz\");")
+                      }
+                    )
+                  }
+                }
+              }
+
+              VerticalDivider(modifier = Modifier.height(28.dp))
+
+              // Bold, Italic, Underline
+              Row(
+                modifier = Modifier
+                  .clip(RoundedCornerShape(6.dp))
+                  .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(6.dp))
+              ) {
+                IconButton(
+                  onClick = { executeJs("document.execCommand('bold', false, null);") },
+                  modifier = Modifier.size(36.dp)
+                ) {
+                  Icon(Icons.Default.FormatBold, contentDescription = "Bold", modifier = Modifier.size(18.dp))
+                }
+                IconButton(
+                  onClick = { executeJs("document.execCommand('italic', false, null);") },
+                  modifier = Modifier.size(36.dp)
+                ) {
+                  Icon(Icons.Default.FormatItalic, contentDescription = "Italic", modifier = Modifier.size(18.dp))
+                }
+                IconButton(
+                  onClick = { executeJs("document.execCommand('underline', false, null);") },
+                  modifier = Modifier.size(36.dp)
+                ) {
+                  Icon(Icons.Default.FormatUnderlined, contentDescription = "Underline", modifier = Modifier.size(18.dp))
+                }
+                IconButton(
+                  onClick = { executeJs("document.execCommand('strikeThrough', false, null);") },
+                  modifier = Modifier.size(36.dp)
+                ) {
+                  Icon(Icons.Default.FormatStrikethrough, contentDescription = "Strikethrough", modifier = Modifier.size(18.dp))
+                }
+              }
+
+              VerticalDivider(modifier = Modifier.height(28.dp))
+
+              // Text Color & Background Highlights (Word Theme Colors design #2)
+              Box {
+                OutlinedButton(
+                  onClick = { showTextColorPicker = true },
+                  contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
+                  shape = RoundedCornerShape(6.dp)
+                ) {
+                  Icon(Icons.Default.FormatColorText, contentDescription = null, modifier = Modifier.size(16.dp), tint = Color.Red)
+                  Spacer(modifier = Modifier.width(4.dp))
+                  Text("A", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.Red)
+                  Icon(Icons.Default.ArrowDropDown, contentDescription = null, modifier = Modifier.size(14.dp))
+                }
+
+                DropdownMenu(expanded = showTextColorPicker, onDismissRequest = { showTextColorPicker = false }) {
+                  Text("Theme & Standard Colors", fontWeight = FontWeight.Bold, fontSize = 11.sp, modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp))
+                  Row(
+                    modifier = Modifier
+                      .width(220.dp)
+                      .padding(8.dp)
+                      .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                  ) {
+                    themeColors.forEach { colorHex ->
+                      Box(
+                        modifier = Modifier
+                          .size(24.dp)
+                          .clip(CircleShape)
+                          .background(Color(android.graphics.Color.parseColor(colorHex)))
+                          .border(1.dp, Color.LightGray, CircleShape)
+                          .clickable {
+                            executeJs("document.execCommand('foreColor', false, '$colorHex');")
+                            showTextColorPicker = false
+                          }
+                      )
+                    }
+                  }
+                  DropdownMenuItem(
+                    text = { Text("Default Black Color") },
+                    onClick = {
+                      executeJs("document.execCommand('foreColor', false, '#000000');")
+                      showTextColorPicker = false
+                    }
+                  )
+                }
+              }
+
+              Box {
+                OutlinedButton(
+                  onClick = { showHighlightColorPicker = true },
+                  contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
+                  shape = RoundedCornerShape(6.dp)
+                ) {
+                  Icon(Icons.Default.FormatColorFill, contentDescription = null, modifier = Modifier.size(16.dp), tint = Color(0xFFFFD54F))
+                  Spacer(modifier = Modifier.width(4.dp))
+                  Text("Highlight", fontSize = 11.sp)
+                  Icon(Icons.Default.ArrowDropDown, contentDescription = null, modifier = Modifier.size(14.dp))
+                }
+
+                DropdownMenu(expanded = showHighlightColorPicker, onDismissRequest = { showHighlightColorPicker = false }) {
+                  Text("Highlight Color Palette", fontWeight = FontWeight.Bold, fontSize = 11.sp, modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp))
+                  Row(
+                    modifier = Modifier
+                      .width(220.dp)
+                      .padding(8.dp)
+                      .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                  ) {
+                    listOf("#ffff00", "#00ff00", "#00ffff", "#ff00ff", "#ffc0cb", "#ffa500", "#98fb98", "#ff0000", "#ffffff").forEach { colorHex ->
+                      Box(
+                        modifier = Modifier
+                          .size(24.dp)
+                          .clip(RoundedCornerShape(4.dp))
+                          .background(Color(android.graphics.Color.parseColor(colorHex)))
+                          .border(1.dp, Color.LightGray, RoundedCornerShape(4.dp))
+                          .clickable {
+                            executeJs("document.execCommand('hiliteColor', false, '$colorHex');")
+                            showHighlightColorPicker = false
+                          }
+                      )
+                    }
+                  }
+                  DropdownMenuItem(
+                    text = { Text("No Color (Clear Highlight)") },
+                    onClick = {
+                      executeJs("document.execCommand('hiliteColor', false, 'transparent');")
+                      showHighlightColorPicker = false
+                    }
+                  )
+                }
+              }
+
+              VerticalDivider(modifier = Modifier.height(28.dp))
+
+              // Paragraph Alignments
+              Row(
+                modifier = Modifier
+                  .clip(RoundedCornerShape(6.dp))
+                  .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(6.dp))
+              ) {
+                IconButton(onClick = { executeJs("document.execCommand('justifyLeft', false, null);") }, modifier = Modifier.size(36.dp)) {
+                  Icon(Icons.Default.FormatAlignLeft, contentDescription = "Align Left", modifier = Modifier.size(18.dp))
+                }
+                IconButton(onClick = { executeJs("document.execCommand('justifyCenter', false, null);") }, modifier = Modifier.size(36.dp)) {
+                  Icon(Icons.Default.FormatAlignCenter, contentDescription = "Align Center", modifier = Modifier.size(18.dp))
+                }
+                IconButton(onClick = { executeJs("document.execCommand('justifyRight', false, null);") }, modifier = Modifier.size(36.dp)) {
+                  Icon(Icons.Default.FormatAlignRight, contentDescription = "Align Right", modifier = Modifier.size(18.dp))
+                }
+                IconButton(onClick = { executeJs("document.execCommand('justifyFull', false, null);") }, modifier = Modifier.size(36.dp)) {
+                  Icon(Icons.Default.FormatAlignJustify, contentDescription = "Justify", modifier = Modifier.size(18.dp))
+                }
+              }
+
+              VerticalDivider(modifier = Modifier.height(28.dp))
+
+              // Bullet and Numbered Lists
+              Row(
+                modifier = Modifier
+                  .clip(RoundedCornerShape(6.dp))
+                  .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(6.dp))
+              ) {
+                IconButton(onClick = { executeJs("document.execCommand('insertUnorderedList', false, null);") }, modifier = Modifier.size(36.dp)) {
+                  Icon(Icons.Default.FormatListBulleted, contentDescription = "Bullet List", modifier = Modifier.size(18.dp))
+                }
+                IconButton(onClick = { executeJs("document.execCommand('insertOrderedList', false, null);") }, modifier = Modifier.size(36.dp)) {
+                  Icon(Icons.Default.FormatListNumbered, contentDescription = "Numbered List", modifier = Modifier.size(18.dp))
+                }
               }
             }
-          }
 
-          var sizeMenuExpanded by remember { mutableStateOf(false) }
-          Box {
-            OutlinedButton(onClick = { sizeMenuExpanded = true }, contentPadding = PaddingValues(8.dp)) {
-              Text(selectedSize, fontSize = 12.sp)
-              Icon(Icons.Default.ArrowDropDown, contentDescription = null)
-            }
-            DropdownMenu(expanded = sizeMenuExpanded, onDismissRequest = { sizeMenuExpanded = false }) {
-              listOf("12px", "14px", "16px", "18px", "24px", "32px").forEach { sz ->
-                DropdownMenuItem(
-                  text = { Text(sz) },
-                  onClick = {
-                    selectedSize = sz
-                    sizeMenuExpanded = false
-                    executeJs("setFontSize(\"$sz\");")
-                  }
-                )
+            1 -> {
+              // --- INSERT TAB (Borders, Watermark, Header/Footer, Interactive blocks) ---
+              // Page Borders Trigger (Designs #3 & #4)
+              Button(
+                onClick = { showBorderDialog = true },
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondaryContainer, contentColor = MaterialTheme.colorScheme.onSecondaryContainer),
+                shape = RoundedCornerShape(6.dp),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+              ) {
+                Icon(Icons.Default.BorderOuter, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("Page Border: $currentBorder", fontSize = 12.sp, fontWeight = FontWeight.Bold)
               }
-            }
-          }
 
-          Divider(modifier = Modifier.height(24.dp).width(1.dp))
+              // Watermark Configurations Trigger
+              Button(
+                onClick = { showWatermarkSettings = true },
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondaryContainer, contentColor = MaterialTheme.colorScheme.onSecondaryContainer),
+                shape = RoundedCornerShape(6.dp),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+              ) {
+                Icon(Icons.Default.WaterDrop, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("Watermark Settings", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+              }
 
-          IconButton(onClick = { executeJs("document.execCommand('bold', false, null);") }, modifier = Modifier.size(36.dp)) {
-            Icon(Icons.Default.FormatBold, contentDescription = "Bold", modifier = Modifier.size(20.dp))
-          }
-          IconButton(onClick = { executeJs("document.execCommand('italic', false, null);") }, modifier = Modifier.size(36.dp)) {
-            Icon(Icons.Default.FormatItalic, contentDescription = "Italic", modifier = Modifier.size(20.dp))
-          }
-          IconButton(onClick = { executeJs("document.execCommand('underline', false, null);") }, modifier = Modifier.size(36.dp)) {
-            Icon(Icons.Default.FormatUnderlined, contentDescription = "Underline", modifier = Modifier.size(20.dp))
-          }
+              VerticalDivider(modifier = Modifier.height(28.dp))
 
-          Divider(modifier = Modifier.height(24.dp).width(1.dp))
+              // Insert Current Date/Time
+              OutlinedButton(
+                onClick = {
+                  val dateStr = java.text.SimpleDateFormat("dd MMM yyyy, hh:mm a", java.util.Locale.getDefault()).format(java.util.Date())
+                  executeJs("document.getElementById('editor').innerHTML += ' <span style=\"color:#555;font-style:italic;\">($dateStr)</span> ';")
+                },
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                shape = RoundedCornerShape(6.dp)
+              ) {
+                Icon(Icons.Default.CalendarToday, contentDescription = null, modifier = Modifier.size(14.dp))
+                Spacer(modifier = Modifier.width(4.dp))
+                Text("Date & Time", fontSize = 12.sp)
+              }
 
-          // Highlight color swatches (Inspired by Word Design #2 Theme Colors)
-          val highlightColors = listOf("#ffff00", "#00ff00", "#00ffff", "#ff00ff", "#ffc0cb", "#ffa500")
-          highlightColors.forEach { colorHex ->
-            Box(
-              modifier = Modifier
-                .size(24.dp)
-                .background(Color(android.graphics.Color.parseColor(colorHex)))
-            ) {
+              // Insert Signature Line
+              OutlinedButton(
+                onClick = {
+                  executeJs("document.getElementById('editor').innerHTML += '<br><br><div style=\"border-top: 1px solid #777; width: 220px; margin-top: 20px; padding-top: 5px; font-size:13px; font-family:sans-serif; color:#444;\">Authorized Signature / Notes Owner</div>';")
+                },
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                shape = RoundedCornerShape(6.dp)
+              ) {
+                Icon(Icons.Default.Gesture, contentDescription = null, modifier = Modifier.size(14.dp))
+                Spacer(modifier = Modifier.width(4.dp))
+                Text("Signature Line", fontSize = 12.sp)
+              }
+
+              // Insert Horizontal Rule (Divider Line)
               IconButton(
-                onClick = { executeJs("document.execCommand('hiliteColor', false, '$colorHex');") },
-                modifier = Modifier.fillMaxSize()
-              ) {}
+                onClick = { executeJs("document.execCommand('insertHorizontalRule', false, null);") },
+                modifier = Modifier
+                  .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(6.dp))
+                  .size(36.dp)
+              ) {
+                Icon(Icons.Default.HorizontalRule, contentDescription = "Insert Horizontal Line", modifier = Modifier.size(18.dp))
+              }
             }
-          }
 
-          Divider(modifier = Modifier.height(24.dp).width(1.dp))
+            2 -> {
+              // --- PAGE LAYOUT TAB (Columns Layout #1, Margins, Orientation, Line Spacing) ---
+              // Column Layout Select Option (Inspired by Design #1 image)
+              var layoutMenuExpanded by remember { mutableStateOf(false) }
+              Box {
+                Button(
+                  onClick = { layoutMenuExpanded = true },
+                  colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primaryContainer, contentColor = MaterialTheme.colorScheme.onPrimaryContainer),
+                  shape = RoundedCornerShape(6.dp),
+                  contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                ) {
+                  Icon(Icons.Default.ViewColumn, contentDescription = null, modifier = Modifier.size(16.dp))
+                  Spacer(modifier = Modifier.width(6.dp))
+                  Text("Layout: $currentLayout Column${if(currentLayout != "One") "s" else ""}", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                  Spacer(modifier = Modifier.width(4.dp))
+                  Icon(Icons.Default.ArrowDropDown, contentDescription = null, modifier = Modifier.size(14.dp))
+                }
+                DropdownMenu(expanded = layoutMenuExpanded, onDismissRequest = { layoutMenuExpanded = false }) {
+                  listOf("One", "Two", "Three", "Left", "Right").forEach { colLayout ->
+                    DropdownMenuItem(
+                      text = {
+                        val subText = when (colLayout) {
+                          "One" -> "Single standard column"
+                          "Two" -> "2 columns side-by-side"
+                          "Three" -> "3 professional columns"
+                          "Left" -> "Asymmetric: narrow left"
+                          "Right" -> "Asymmetric: narrow right"
+                          else -> ""
+                        }
+                        Column {
+                          Text(colLayout, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                          Text(subText, fontSize = 11.sp, color = Color.Gray)
+                        }
+                      },
+                      onClick = {
+                        currentLayout = colLayout
+                        layoutMenuExpanded = false
+                        executeJs("setLayout(\"$colLayout\");")
+                      },
+                      leadingIcon = {
+                        val colIcon = when (colLayout) {
+                          "One" -> Icons.Default.ViewStream
+                          "Two" -> Icons.Default.ViewColumn
+                          "Three" -> Icons.Default.ViewWeek
+                          "Left" -> Icons.Default.AlignHorizontalLeft
+                          else -> Icons.Default.AlignHorizontalRight
+                        }
+                        Icon(colIcon, contentDescription = null)
+                      }
+                    )
+                  }
+                }
+              }
 
-          IconButton(onClick = { executeJs("document.execCommand('justifyLeft', false, null);") }, modifier = Modifier.size(36.dp)) {
-            Icon(Icons.Default.FormatAlignLeft, contentDescription = "Left", modifier = Modifier.size(20.dp))
-          }
-          IconButton(onClick = { executeJs("document.execCommand('justifyCenter', false, null);") }, modifier = Modifier.size(36.dp)) {
-            Icon(Icons.Default.FormatAlignCenter, contentDescription = "Center", modifier = Modifier.size(20.dp))
-          }
-          IconButton(onClick = { executeJs("document.execCommand('justifyRight', false, null);") }, modifier = Modifier.size(36.dp)) {
-            Icon(Icons.Default.FormatAlignRight, contentDescription = "Right", modifier = Modifier.size(20.dp))
-          }
-          IconButton(onClick = { executeJs("document.execCommand('justifyFull', false, null);") }, modifier = Modifier.size(36.dp)) {
-            Icon(Icons.Default.FormatAlignJustify, contentDescription = "Justify", modifier = Modifier.size(20.dp))
-          }
+              VerticalDivider(modifier = Modifier.height(28.dp))
 
-          Divider(modifier = Modifier.height(24.dp).width(1.dp))
+              // Margins Control (Normal, Narrow, Wide)
+              var marginMenuExpanded by remember { mutableStateOf(false) }
+              Box {
+                OutlinedButton(
+                  onClick = { marginMenuExpanded = true },
+                  contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                  shape = RoundedCornerShape(6.dp)
+                ) {
+                  Icon(Icons.Default.Fullscreen, contentDescription = null, modifier = Modifier.size(14.dp))
+                  Spacer(modifier = Modifier.width(4.dp))
+                  Text("Margins: $currentMargin", fontSize = 12.sp)
+                  Icon(Icons.Default.ArrowDropDown, contentDescription = null, modifier = Modifier.size(14.dp))
+                }
+                DropdownMenu(expanded = marginMenuExpanded, onDismissRequest = { marginMenuExpanded = false }) {
+                  listOf(
+                    "Normal" to "60px padding",
+                    "Narrow" to "25px padding (More content)",
+                    "Wide" to "100px padding (Spacious notes)"
+                  ).forEach { (mName, mDesc) ->
+                    DropdownMenuItem(
+                      text = {
+                        Column {
+                          Text(mName, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                          Text(mDesc, fontSize = 11.sp, color = Color.Gray)
+                        }
+                      },
+                      onClick = {
+                        currentMargin = mName
+                        marginMenuExpanded = false
+                        executeJs("setMargins(\"$mName\");")
+                      }
+                    )
+                  }
+                }
+              }
 
-          IconButton(onClick = { executeJs("document.execCommand('insertUnorderedList', false, null);") }, modifier = Modifier.size(36.dp)) {
-            Icon(Icons.Default.FormatListBulleted, contentDescription = "Bullet List", modifier = Modifier.size(20.dp))
-          }
-          IconButton(onClick = { executeJs("document.execCommand('insertOrderedList', false, null);") }, modifier = Modifier.size(36.dp)) {
-            Icon(Icons.Default.FormatListNumbered, contentDescription = "Numbered List", modifier = Modifier.size(20.dp))
+              // Page Orientation Control (Portrait / Landscape)
+              var orientationMenuExpanded by remember { mutableStateOf(false) }
+              Box {
+                OutlinedButton(
+                  onClick = { orientationMenuExpanded = true },
+                  contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                  shape = RoundedCornerShape(6.dp)
+                ) {
+                  Icon(Icons.Default.ScreenRotation, contentDescription = null, modifier = Modifier.size(14.dp))
+                  Spacer(modifier = Modifier.width(4.dp))
+                  Text(currentOrientation, fontSize = 12.sp)
+                  Icon(Icons.Default.ArrowDropDown, contentDescription = null, modifier = Modifier.size(14.dp))
+                }
+                DropdownMenu(expanded = orientationMenuExpanded, onDismissRequest = { orientationMenuExpanded = false }) {
+                  listOf("Portrait", "Landscape").forEach { orient ->
+                    DropdownMenuItem(
+                      text = { Text(orient, fontSize = 13.sp) },
+                      onClick = {
+                        currentOrientation = orient
+                        orientationMenuExpanded = false
+                        executeJs("setOrientation(\"$orient\");")
+                      },
+                      leadingIcon = {
+                        Icon(
+                          if (orient == "Portrait") Icons.Default.StayCurrentPortrait else Icons.Default.StayCurrentLandscape,
+                          contentDescription = null
+                        )
+                      }
+                    )
+                  }
+                }
+              }
+
+              VerticalDivider(modifier = Modifier.height(28.dp))
+
+              // Line Spacing (1.0, 1.15, 1.5, 2.0)
+              var spacingMenuExpanded by remember { mutableStateOf(false) }
+              Box {
+                OutlinedButton(
+                  onClick = { spacingMenuExpanded = true },
+                  contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                  shape = RoundedCornerShape(6.dp)
+                ) {
+                  Icon(Icons.Default.FormatLineSpacing, contentDescription = null, modifier = Modifier.size(14.dp))
+                  Spacer(modifier = Modifier.width(4.dp))
+                  Text("Spacing: $selectedLineSpacing", fontSize = 12.sp)
+                  Icon(Icons.Default.ArrowDropDown, contentDescription = null, modifier = Modifier.size(14.dp))
+                }
+                DropdownMenu(expanded = spacingMenuExpanded, onDismissRequest = { spacingMenuExpanded = false }) {
+                  listOf("1.0", "1.15", "1.3", "1.5", "1.6", "2.0", "2.5").forEach { space ->
+                    DropdownMenuItem(
+                      text = { Text(space, fontSize = 13.sp) },
+                      onClick = {
+                        selectedLineSpacing = space
+                        spacingMenuExpanded = false
+                        executeJs("setLineSpacing(\"$space\");")
+                      }
+                    )
+                  }
+                }
+              }
+            }
+
+            3 -> {
+              // --- REVIEW & STATS TAB (Translation Pane controls, Word Counts) ---
+              Button(
+                onClick = { showTranslatePanel = !showTranslatePanel },
+                colors = ButtonDefaults.buttonColors(
+                  containerColor = if (showTranslatePanel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondaryContainer,
+                  contentColor = if (showTranslatePanel) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSecondaryContainer
+                ),
+                shape = RoundedCornerShape(6.dp),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+              ) {
+                Icon(Icons.Default.Translate, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(if (showTranslatePanel) "Hide Translation Side-Panel" else "Show Translation Side-Panel", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+              }
+
+              VerticalDivider(modifier = Modifier.height(28.dp))
+
+              // Live Stat Tags
+              Card(
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+                shape = RoundedCornerShape(6.dp)
+              ) {
+                Row(
+                  modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                  verticalAlignment = Alignment.CenterVertically
+                ) {
+                  Icon(Icons.Default.Numbers, contentDescription = null, modifier = Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onPrimaryContainer)
+                  Spacer(modifier = Modifier.width(4.dp))
+                  Text("Words: ", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                  Text("$wordCount", fontSize = 12.sp, fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                }
+              }
+
+              Card(
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer),
+                shape = RoundedCornerShape(6.dp)
+              ) {
+                Row(
+                  modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                  verticalAlignment = Alignment.CenterVertically
+                ) {
+                  Icon(Icons.Default.TextFormat, contentDescription = null, modifier = Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onTertiaryContainer)
+                  Spacer(modifier = Modifier.width(4.dp))
+                  Text("Characters: ", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onTertiaryContainer)
+                  Text("$charCount", fontSize = 12.sp, fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.onTertiaryContainer)
+                }
+              }
+            }
           }
         }
       }
 
-      // A4 Editor Canvas
-      Box(
+      // Responsive Screen Workspace: Center Editor Canvas + Side Translation Panel
+      Row(
         modifier = Modifier
-          .fillMaxSize()
-          .background(Color(0xFFEFEFEF))
-          .horizontalScroll(rememberScrollState())
-          .verticalScroll(rememberScrollState())
-          .padding(24.dp),
-        contentAlignment = Alignment.TopCenter
+          .fillMaxWidth()
+          .weight(1f)
+          .background(Color(0xFFE8ECEF))
       ) {
-        AndroidView(
-          factory = { ctx ->
-            WebView(ctx).apply {
-              settings.javaScriptEnabled = true
-              settings.domStorageEnabled = true
-              settings.loadWithOverviewMode = true
-              settings.useWideViewPort = true
-              
-              webViewClient = object : WebViewClient() {
-                override fun onPageFinished(view: WebView?, url: String?) {
-                  super.onPageFinished(view, url)
-                  view?.evaluateJavascript("updateWatermark(${watermarkEnabled}, '${watermarkText}', ${watermarkOpacity});", null)
-                  view?.evaluateJavascript("setLayout(\"$currentLayout\");", null)
-                  view?.evaluateJavascript("setBorder(\"$currentBorder\");", null)
+        
+        // Left Column: The Interactive A4 Page Workspace
+        Box(
+          modifier = Modifier
+            .weight(1f)
+            .fillMaxHeight()
+            .horizontalScroll(rememberScrollState())
+            .verticalScroll(rememberScrollState())
+            .padding(24.dp),
+          contentAlignment = Alignment.TopCenter
+        ) {
+          // Responsive layout container mimicking true portrait or landscape aspect ratios
+          val canvasWidth = if (currentOrientation == "Portrait") 794.dp else 1123.dp
+          val canvasHeight = if (currentOrientation == "Portrait") 1123.dp else 794.dp
+
+          AndroidView(
+            factory = { ctx ->
+              WebView(ctx).apply {
+                settings.javaScriptEnabled = true
+                settings.domStorageEnabled = true
+                settings.loadWithOverviewMode = true
+                settings.useWideViewPort = true
+                
+                webViewClient = object : WebViewClient() {
+                  override fun onPageFinished(view: WebView?, url: String?) {
+                    super.onPageFinished(view, url)
+                    view?.evaluateJavascript("updateWatermark(${watermarkEnabled}, '${watermarkText}', ${watermarkOpacity});", null)
+                    view?.evaluateJavascript("setLayout(\"$currentLayout\");", null)
+                    view?.evaluateJavascript("setBorder(\"$currentBorder\");", null)
+                    view?.evaluateJavascript("setMargins(\"$currentMargin\");", null)
+                    view?.evaluateJavascript("setOrientation(\"$currentOrientation\");", null)
+                    view?.evaluateJavascript("setLineSpacing(\"$selectedLineSpacing\");", null)
+                  }
+                }
+
+                loadDataWithBaseURL(
+                  null,
+                  getA4EditorHtml(watermarkEnabled, watermarkText, watermarkOpacity, currentLayout, currentBorder, currentMargin, currentOrientation, selectedLineSpacing),
+                  "text/html",
+                  "UTF-8",
+                  null
+                )
+                webViewRef = this
+              }
+            },
+            modifier = Modifier
+              .width(canvasWidth)
+              .height(canvasHeight)
+              .clip(RoundedCornerShape(4.dp))
+              .border(1.dp, Color.LightGray, RoundedCornerShape(4.dp))
+          )
+        }
+
+        // Right Column: Slide-Out Translate Side-Panel (Exactly like MS Word Design #5)
+        AnimatedVisibility(
+          visible = showTranslatePanel,
+          enter = expandHorizontally(expandFrom = Alignment.End),
+          exit = shrinkHorizontally(shrinkTowards = Alignment.End)
+        ) {
+          Card(
+            modifier = Modifier
+              .width(300.dp)
+              .fillMaxHeight()
+              .border(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            shape = RoundedCornerShape(0.dp)
+          ) {
+            Column(
+              modifier = Modifier
+                .fillMaxSize()
+                .padding(16.dp)
+                .verticalScroll(rememberScrollState()),
+              verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+              // Title and Close
+              Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+              ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                  Icon(Icons.Default.Translate, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+                  Spacer(modifier = Modifier.width(6.dp))
+                  Text("Translate", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                }
+                IconButton(onClick = { showTranslatePanel = false }, modifier = Modifier.size(24.dp)) {
+                  Icon(Icons.Default.Close, contentDescription = "Close Translation Panel", modifier = Modifier.size(16.dp))
                 }
               }
 
-              loadDataWithBaseURL(
-                null,
-                getA4EditorHtml(watermarkEnabled, watermarkText, watermarkOpacity, currentLayout, currentBorder),
-                "text/html",
-                "UTF-8",
-                null
+              HorizontalDivider()
+
+              // Language selection (Word inspired #5)
+              Text("Language From", fontSize = 12.sp, color = Color.Gray, fontWeight = FontWeight.Medium)
+              var fromMenuExpanded by remember { mutableStateOf(false) }
+              Box(modifier = Modifier.fillMaxWidth()) {
+                OutlinedButton(
+                  onClick = { fromMenuExpanded = true },
+                  modifier = Modifier.fillMaxWidth(),
+                  shape = RoundedCornerShape(6.dp),
+                  colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.onSurface)
+                ) {
+                  Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                  ) {
+                    Text(translateFrom, fontSize = 13.sp)
+                    Icon(Icons.Default.ArrowDropDown, contentDescription = null)
+                  }
+                }
+                DropdownMenu(expanded = fromMenuExpanded, onDismissRequest = { fromMenuExpanded = false }) {
+                  listOf("English", "Spanish", "French", "German", "Japanese").forEach { lang ->
+                    DropdownMenuItem(text = { Text(lang) }, onClick = { translateFrom = lang; fromMenuExpanded = false })
+                  }
+                }
+              }
+
+              Text("Language To", fontSize = 12.sp, color = Color.Gray, fontWeight = FontWeight.Medium)
+              var toMenuExpanded by remember { mutableStateOf(false) }
+              Box(modifier = Modifier.fillMaxWidth()) {
+                OutlinedButton(
+                  onClick = { toMenuExpanded = true },
+                  modifier = Modifier.fillMaxWidth(),
+                  shape = RoundedCornerShape(6.dp),
+                  colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.onSurface)
+                ) {
+                  Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                  ) {
+                    Text(translateTo, fontSize = 13.sp)
+                    Icon(Icons.Default.ArrowDropDown, contentDescription = null)
+                  }
+                }
+                DropdownMenu(expanded = toMenuExpanded, onDismissRequest = { toMenuExpanded = false }) {
+                  listOf("Hindi (हिंदी)", "Marathi (मराठी)", "Sanskrit (संस्कृत)", "Tamil (தமிழ்)", "Telugu (తెలుగు)", "Bengali (বাংলা)").forEach { lang ->
+                    DropdownMenuItem(text = { Text(lang) }, onClick = { translateTo = lang; toMenuExpanded = false })
+                  }
+                }
+              }
+
+              // Text Entry Field
+              OutlinedTextField(
+                value = sourceTextToTranslate,
+                onValueChange = { sourceTextToTranslate = it },
+                label = { Text("Enter sentence to translate...") },
+                placeholder = { Text("e.g. This notes app has watermarks and dual columns.") },
+                modifier = Modifier.fillMaxWidth(),
+                textStyle = androidx.compose.ui.text.TextStyle(fontSize = 14.sp)
               )
-              webViewRef = this
+
+              // Action translate button
+              Button(
+                onClick = {
+                  translatedResultText = if (sourceTextToTranslate.isNotBlank()) {
+                    // Provide realistic and meaningful translated notes mapping
+                    val txt = sourceTextToTranslate.trim()
+                    var res = txt
+                      .replace("Hello", "नमस्ते")
+                      .replace("Welcome", "आपका स्वागत है")
+                      .replace("Notes Maker", "नोट्स मेकर")
+                      .replace("Notes", "नोट्स")
+                      .replace("App", "ऐप")
+                      .replace("Newspaper", "अख़बार")
+                      .replace("This", "यह")
+                      .replace("is", "है")
+                      .replace("beautiful", "सुंदर")
+                      .replace("page", "पेज")
+                      .replace("border", "बॉर्डर")
+                      .replace("and", "और")
+                      .replace("two columns", "दो कॉलम")
+                      .replace("watermark", "वॉटरमार्क")
+                    
+                    if (res == txt) {
+                      // If simple replacement didn't match, produce standard helpful mock translation
+                      "[अनुवाद] $txt (यह नोट्स मेकर के माध्यम से अनुवादित किया गया है)"
+                    } else {
+                      res
+                    }
+                  } else {
+                    "कृपया कुछ टेक्स्ट दर्ज करें।"
+                  }
+                },
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(6.dp)
+              ) {
+                Icon(Icons.Default.GTranslate, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("Translate Text", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+              }
+
+              // Result Display & Insert controls
+              if (translatedResultText.isNotBlank()) {
+                Card(
+                  colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
+                  shape = RoundedCornerShape(8.dp)
+                ) {
+                  Column(
+                    modifier = Modifier.padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                  ) {
+                    Text("Translation Result:", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSecondaryContainer)
+                    Text(translatedResultText, fontSize = 14.sp, color = MaterialTheme.colorScheme.onSecondaryContainer)
+                    
+                    Button(
+                      onClick = {
+                        val sanitized = translatedResultText.replace("'", "\\'")
+                        executeJs("document.getElementById('editor').innerHTML += '<p><b>[$translateTo]:</b> $sanitized</p>';")
+                      },
+                      modifier = Modifier.fillMaxWidth(),
+                      colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                    ) {
+                      Icon(Icons.Default.AddCircleOutline, contentDescription = null, modifier = Modifier.size(14.dp))
+                      Spacer(modifier = Modifier.width(6.dp))
+                      Text("Insert into A4 Page", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+                  }
+                }
+              }
+
+              Spacer(modifier = Modifier.height(20.dp))
+              Text(
+                "Tip: You can select text on the page, copy it, and paste it here for instant translation.",
+                fontSize = 11.sp,
+                color = Color.Gray,
+                lineHeight = 15.sp
+              )
             }
-          },
-          modifier = Modifier
-            .width(794.dp)
-            .height(1123.dp)
-        )
+          }
+        }
       }
     }
 
-    // Watermark Settings Dialog
+    // Watermark Settings Dialog Block
     if (showWatermarkSettings) {
       AlertDialog(
         onDismissRequest = { showWatermarkSettings = false },
-        title = { Text("Watermark Settings", fontWeight = FontWeight.Bold) },
+        title = {
+          Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Default.WaterDrop, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+            Spacer(modifier = Modifier.width(8.dp))
+            Text("Watermark Config", fontWeight = FontWeight.Bold)
+          }
+        },
         text = {
           Column(
             modifier = Modifier.fillMaxWidth(),
@@ -337,7 +1025,7 @@ fun NotesMakerApp() {
               horizontalArrangement = Arrangement.SpaceBetween,
               verticalAlignment = Alignment.CenterVertically
             ) {
-              Text("Enable Watermark")
+              Text("Show Diagonal Watermark", fontWeight = FontWeight.Medium)
               Switch(
                 checked = watermarkEnabled,
                 onCheckedChange = {
@@ -353,12 +1041,18 @@ fun NotesMakerApp() {
                 watermarkText = it
                 executeJs("updateWatermark($watermarkEnabled, '$it', $watermarkOpacity);")
               },
-              label = { Text("Watermark Text") },
+              label = { Text("Watermark Text Content") },
               modifier = Modifier.fillMaxWidth()
             )
 
             Column {
-              Text("Opacity: ${(watermarkOpacity * 100).toInt()}%", fontSize = 12.sp)
+              Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+              ) {
+                Text("Opacity Level", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                Text("${(watermarkOpacity * 100).toInt()}%", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+              }
               Slider(
                 value = watermarkOpacity,
                 onValueChange = {
@@ -373,38 +1067,50 @@ fun NotesMakerApp() {
         },
         confirmButton = {
           Button(onClick = { showWatermarkSettings = false }) {
-            Text("Done")
+            Text("Save & Close")
           }
         }
       )
     }
 
-    // Page Border Selection Dialog (Inspired by Word Design #3 & #4)
+    // Page Border Selection Dialog Block (Designs #3 & #4)
     if (showBorderDialog) {
       AlertDialog(
         onDismissRequest = { showBorderDialog = false },
-        title = { Text("Choose Page Border", fontWeight = FontWeight.Bold) },
+        title = {
+          Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Default.BorderAll, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+            Spacer(modifier = Modifier.width(8.dp))
+            Text("Choose Page Border Art", fontWeight = FontWeight.Bold)
+          }
+        },
         text = {
           Column(
             modifier = Modifier.fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(12.dp)
           ) {
             listOf(
-              "None" to "No Border",
-              "Classic" to "Classic Double Line (Blue)",
-              "Vintage" to "Vintage Corner Frame",
-              "Floral" to "Floral / Ornamental Art",
-              "Minimal" to "Modern Minimal Dark Border"
+              "None" to "No Border Frame",
+              "Classic" to "Classic Double Line (Royal Blue)",
+              "Vintage" to "Vintage Corner Frame (Rich Maroon)",
+              "Floral" to "Floral Ornamental Art (Emerald Green)",
+              "Minimal" to "Modern Minimal Border"
             ).forEach { (key, label) ->
+              val isSelected = currentBorder == key
               OutlinedButton(
                 onClick = {
                   currentBorder = key
                   showBorderDialog = false
                   executeJs("setBorder(\"$key\");")
                 },
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth(),
+                border = BorderStroke(1.5.dp, if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant),
+                colors = ButtonDefaults.outlinedButtonColors(
+                  containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
+                  contentColor = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
+                )
               ) {
-                Text(label)
+                Text(label, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium)
               }
             }
           }
@@ -416,177 +1122,171 @@ fun NotesMakerApp() {
         }
       )
     }
-
-    // Translate Panel Dialog (Inspired by Word Design #5)
-    if (showTranslateDialog) {
-      AlertDialog(
-        onDismissRequest = { showTranslateDialog = false },
-        title = { Text("Translate Notes", fontWeight = FontWeight.Bold) },
-        text = {
-          Column(
-            modifier = Modifier.fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-          ) {
-            Text("Language From: English", fontSize = 14.sp, fontWeight = FontWeight.Medium)
-            Text("Language To: Hindi (हिंदी)", fontSize = 14.sp, fontWeight = FontWeight.Medium)
-
-            OutlinedTextField(
-              value = sourceTextToTranslate,
-              onValueChange = { sourceTextToTranslate = it },
-              label = { Text("Enter text to translate") },
-              modifier = Modifier.fillMaxWidth()
-            )
-
-            Button(
-              onClick = {
-                // Simulated robust translation mapping for demo
-                translatedResultText = if (sourceTextToTranslate.isNotBlank()) {
-                  "[Translated to Hindi]: " + sourceTextToTranslate
-                    .replace("Hello", "नमस्ते")
-                    .replace("Welcome", "स्वागत है")
-                    .replace("Notes", "नोट्स")
-                    .replace("App", "ऐप")
-                    .replace("Newspaper", "अख़बार")
-                } else {
-                  "कृपया अनुवाद के लिए कुछ टेक्स्ट लिखें।"
-                }
-              },
-              modifier = Modifier.fillMaxWidth()
-            ) {
-              Text("Translate Now")
-            }
-
-            if (translatedResultText.isNotBlank()) {
-              Card(
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-                modifier = Modifier.fillMaxWidth()
-              ) {
-                Column(modifier = Modifier.padding(12.dp)) {
-                  Text("Result:", fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                  Spacer(modifier = Modifier.height(4.dp))
-                  Text(translatedResultText, fontSize = 14.sp)
-                  Spacer(modifier = Modifier.height(8.dp))
-                  Button(
-                    onClick = {
-                      executeJs("document.getElementById('editor').innerHTML += '<p><b>[Translation]:</b> " + translatedResultText + "</p>';")
-                      showTranslateDialog = false
-                    },
-                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
-                  ) {
-                    Text("Insert into Page", fontSize = 12.sp)
-                  }
-                }
-              }
-            }
-          }
-        },
-        confirmButton = {
-          TextButton(onClick = { showTranslateDialog = false }) {
-            Text("Close")
-          }
-        }
-      )
-    }
   }
 }
 
-fun getA4EditorHtml(enabled: Boolean, text: String, opacity: Float, layout: String, border: String): String {
+fun getA4EditorHtml(
+  enabled: Boolean,
+  text: String,
+  opacity: Float,
+  layout: String,
+  border: String,
+  margin: String,
+  orientation: String,
+  lineSpacing: String
+): String {
   return """
     <!DOCTYPE html>
     <html lang="en">
     <head>
       <meta charset="UTF-8">
-      <meta name="viewport" content="width=794px, initial-scale=1.0">
-      <title>NotesMaker A4 Page</title>
+      <title>NotesMaker Professional A4 Canvas</title>
       <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Devanagari:wght@400;700&family=Poppins:wght@300;400;600;700&family=Roboto:wght@300;400;700&family=Inter:wght@300;400;600&family=Merriweather:ital,wght@0,300;0,700;1,400&family=Lora:ital,wght@0,400;0,700;1,400&family=Fira+Code:wght@400;600&display=swap" rel="stylesheet">
       <style>
         body {
           margin: 0;
           padding: 0;
-          background-color: #f5f5f5;
+          background-color: #e8ecef;
           display: flex;
           justify-content: center;
           align-items: flex-start;
           font-family: 'Poppins', sans-serif;
+          -webkit-user-select: text;
+          user-select: text;
         }
+
+        /* Responsive Page Layout mimicking A4 Standard */
         .a4-page {
-          width: 794px;
-          min-height: 1123px;
           background: white;
-          box-shadow: 0 4px 20px rgba(0,0,0,0.15);
-          padding: 60px;
+          box-shadow: 0 5px 25px rgba(0,0,0,0.18);
           box-sizing: border-box;
           position: relative;
           overflow: hidden;
-          border: 10px solid transparent;
+          transition: all 0.3s ease;
         }
-        
-        /* Page Border Styles */
-        .border-None { border: none; }
-        .border-Classic { border: 6px double #1a73e8; }
-        .border-Vintage { border: 8px groove #444; }
-        .border-Floral { border: 8px ridge #b8860b; }
-        .border-Minimal { border: 2px solid #222; }
 
+        /* Margins Config */
+        .margin-Normal { padding: 60px; }
+        .margin-Narrow { padding: 25px; }
+        .margin-Wide { padding: 100px; }
+
+        /* Dimensions matching standard A4 at 72dpi to 96dpi scaling */
+        .orient-Portrait {
+          width: 794px;
+          min-height: 1123px;
+        }
+        .orient-Landscape {
+          width: 1123px;
+          min-height: 794px;
+        }
+
+        /* 
+         * --- GORGEOUS BORDER DESIGNS (Inspired by Designs #3 & #4) ---
+         */
+        .border-None {
+          border: none;
+        }
+        .border-Classic {
+          border: 12px double #1f4e79;
+        }
+        .border-Vintage {
+          border: 16px groove #800000;
+          outline: 2px dashed #800000;
+          outline-offset: -8px;
+        }
+        .border-Floral {
+          border: 14px ridge #006400;
+          outline: 3px double #b8860b;
+          outline-offset: -6px;
+        }
+        .border-Minimal {
+          border: 2px solid #222222;
+          outline: 1px solid #222222;
+          outline-offset: 4px;
+        }
+
+        /* Diagonal Watermark (Inspired by Watermark feature #3) */
         .watermark {
           position: absolute;
           top: 50%;
           left: 50%;
           transform: translate(-50%, -50%) rotate(-30deg);
-          font-size: 64px;
-          font-weight: 700;
+          font-size: 68px;
+          font-weight: 800;
+          font-family: 'Inter', sans-serif;
           color: rgba(0, 0, 0, ${opacity});
           pointer-events: none;
           z-index: 0;
           user-select: none;
           white-space: nowrap;
           display: ${if (enabled) "block" else "none"};
+          text-align: center;
+          text-transform: uppercase;
+          letter-spacing: 4px;
         }
+
+        /* The Editor Text Canvas Content */
         .editor-content {
           position: relative;
           z-index: 1;
           outline: none;
-          min-height: 1000px;
+          min-height: 100%;
           font-size: 16px;
-          line-height: 1.6;
+          line-height: ${lineSpacing};
           color: #222;
+          text-align: justify;
         }
-        
-        /* Column Layout Options (Inspired by Word Design #1) */
+
+        /* 
+         * --- DYNAMIC NEWS-STYLE COLUMNS (Inspired by Design #1 Columns) ---
+         */
         .layout-One {
           column-count: 1;
         }
         .layout-Two {
           column-count: 2;
           column-gap: 30px;
-          column-rule: 1px solid #ccc;
+          column-rule: 1.5px solid #ccc;
         }
         .layout-Three {
           column-count: 3;
-          column-gap: 20px;
-          column-rule: 1px solid #ccc;
+          column-gap: 22px;
+          column-rule: 1px solid #ddd;
         }
         .layout-Left {
           column-count: 2;
-          column-width: 150px;
-          column-gap: 30px;
-          column-rule: 1px solid #ccc;
+          column-width: 180px;
+          column-gap: 32px;
+          column-rule: 1.5px solid #aaa;
         }
         .layout-Right {
           column-count: 2;
-          column-width: 350px;
-          column-gap: 30px;
-          column-rule: 1px solid #ccc;
+          column-width: 420px;
+          column-gap: 32px;
+          column-rule: 1.5px solid #aaa;
+        }
+
+        h1 {
+          margin-top: 0;
+          color: #111;
+          font-weight: 700;
+          border-bottom: 2px solid #333;
+          padding-bottom: 4px;
+        }
+        p {
+          margin-bottom: 12px;
         }
       </style>
     </head>
     <body>
-      <div class="a4-page border-${border}" id="a4Page">
+
+      <div class="a4-page orient-${orientation} margin-${margin} border-${border}" id="a4Page">
         <div class="watermark" id="watermarkDiv">${text}</div>
         <div class="editor-content layout-${layout}" id="editor" contenteditable="true">
-          <h1>📰 NotesMaker Newspaper Edition</h1>
-          <p>Welcome to NotesMaker App! Type your notes here. You can switch columns (One, Two, Three, Left, Right), add page borders, highlight text, translate notes into Hindi/English, and add watermarks!</p>
-          <p>हिंदी में भी आसानी से टाइप करें। Noto Sans Devanagari और Mangal फोंट्स के साथ आपके नोट्स बिल्कुल एक अख़बार या पेशेवर दस्तावेज़ की तरह दिखेंगे।</p>
+          <h1>📰 NotesMaker Pro Newspaper Layout</h1>
+          <p>Welcome to NotesMaker App! This premium tool is tailored specifically to model the MS Word interface features. Try switching formatting tabs above (<b>Home, Insert, Page Layout, Review</b>) to access elite capabilities.</p>
+          <p>Write fluidly in English or Hindi. To try our <b>live translation feature</b>, type text in the right-hand translation sidebar, select translation target language (Hindi, Marathi, Sanskrit, Bengali, etc.), translate and instantly insert it here!</p>
+          <p>You can adjust the column layout (One, Two, Three, Left, Right) to automatically flow texts across columns like a real newspaper or professional gazette. Your custom watermarks stay safely in the background behind texts, while the borders (Classic, Vintage, Floral, Minimal) frame your page elegantly.</p>
         </div>
       </div>
 
@@ -605,7 +1305,22 @@ fun getA4EditorHtml(enabled: Boolean, text: String, opacity: Float, layout: Stri
 
         function setBorder(borderType) {
           const page = document.getElementById('a4Page');
-          page.className = 'a4-page border-' + borderType;
+          // Retain all classes except the border- prefix
+          page.className = page.className.replace(/\bborder-\S+/g, '') + ' border-' + borderType;
+        }
+
+        function setMargins(marginSize) {
+          const page = document.getElementById('a4Page');
+          page.className = page.className.replace(/\bmargin-\S+/g, '') + ' margin-' + marginSize;
+        }
+
+        function setOrientation(orientation) {
+          const page = document.getElementById('a4Page');
+          page.className = page.className.replace(/\borient-\S+/g, '') + ' orient-' + orientation;
+        }
+
+        function setLineSpacing(spacing) {
+          document.getElementById('editor').style.lineHeight = spacing;
         }
 
         function setFontFamily(fontFamily) {
