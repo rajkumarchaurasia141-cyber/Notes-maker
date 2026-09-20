@@ -7,9 +7,13 @@ import android.print.PrintManager
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColor
+import androidx.compose.animation.core.*
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.foundation.BorderStroke
@@ -98,6 +102,17 @@ fun NotesMakerApp() {
   var wordCount by remember { mutableStateOf(35) }
   var charCount by remember { mutableStateOf(240) }
 
+  // Intercept back button to dismiss panels/dialogs gracefully
+  BackHandler(enabled = showTranslatePanel || showWatermarkSettings || showBorderDialog) {
+    if (showWatermarkSettings) {
+      showWatermarkSettings = false
+    } else if (showBorderDialog) {
+      showBorderDialog = false
+    } else if (showTranslatePanel) {
+      showTranslatePanel = false
+    }
+  }
+
   val fonts = listOf(
     "Poppins" to "'Poppins', sans-serif",
     "Noto Sans Devanagari" to "'Noto Sans Devanagari', sans-serif",
@@ -154,14 +169,14 @@ fun NotesMakerApp() {
               )
               Spacer(modifier = Modifier.width(8.dp))
               Text(
-                "NotesMaker App",
+                "Vidya Agent",
                 fontWeight = FontWeight.ExtraBold,
                 fontSize = 20.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
               )
               Spacer(modifier = Modifier.width(6.dp))
               Badge(containerColor = MaterialTheme.colorScheme.primaryContainer) {
-                Text("Pro Edition", color = MaterialTheme.colorScheme.onPrimaryContainer, fontSize = 10.sp, modifier = Modifier.padding(horizontal = 4.dp))
+                Text("Raj Sir Official", color = MaterialTheme.colorScheme.onPrimaryContainer, fontSize = 10.sp, modifier = Modifier.padding(horizontal = 4.dp))
               }
             }
           },
@@ -184,7 +199,7 @@ fun NotesMakerApp() {
               onClick = {
                 webViewRef?.let { wv ->
                   val printManager = context.getSystemService(Context.PRINT_SERVICE) as PrintManager
-                  val jobName = "NotesMaker_${System.currentTimeMillis()}"
+                  val jobName = "VidyaAgent_${System.currentTimeMillis()}"
                   val printAdapter = wv.createPrintDocumentAdapter(jobName)
                   val printAttributes = PrintAttributes.Builder()
                     .setMediaSize(PrintAttributes.MediaSize.ISO_A4)
@@ -204,6 +219,9 @@ fun NotesMakerApp() {
           },
           colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
         )
+
+        // Spectacular animated brand ticker/marquee header
+        AnimatedBrandingHeader()
 
         // Microsoft Word Style Ribbon Tabs Selector
         TabRow(
@@ -552,6 +570,37 @@ fun NotesMakerApp() {
               ) {
                 Icon(Icons.Default.HorizontalRule, contentDescription = "Insert Horizontal Line", modifier = Modifier.size(18.dp))
               }
+
+              VerticalDivider(modifier = Modifier.height(28.dp))
+
+              // Clear Canvas
+              OutlinedButton(
+                onClick = {
+                  executeJs("document.getElementById('editor').innerHTML = '';")
+                },
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                shape = RoundedCornerShape(6.dp),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
+              ) {
+                Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(14.dp))
+                Spacer(modifier = Modifier.width(4.dp))
+                Text("Clear Canvas", fontSize = 12.sp)
+              }
+
+              // Reset Template
+              OutlinedButton(
+                onClick = {
+                  executeJs("""
+                    document.getElementById('editor').innerHTML = '<h1>🎓 Vidya Agent Official App</h1><h3 style="color: #4f46e5; margin-top: -6px; margin-bottom: 16px; font-weight: 600; border-bottom: 1px dashed #ccc; padding-bottom: 8px;">👨‍💻 Developer & Founder: Raj sir</h3><p>Welcome to Vidya Agent Official App! This premium tool is tailored specifically to model elite document editing features. Try switching formatting tabs above (<b>Home, Insert, Page Layout, Review</b>) to access elite capabilities.</p><p>Write fluidly in English or Hindi. To try our <b>live translation feature</b>, type text in the right-hand translation sidebar, select translation target language (Hindi, Marathi, Sanskrit, Bengali, etc.), translate and instantly insert it here!</p><p>You can adjust the column layout (One, Two, Three, Left, Right) to automatically flow texts across columns like a real newspaper or professional gazette. Your custom watermarks stay safely in the background behind texts, while the borders (Classic, Vintage, Floral, Minimal) frame your page elegantly.</p>';
+                  """.trimIndent())
+                },
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                shape = RoundedCornerShape(6.dp)
+              ) {
+                Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(14.dp))
+                Spacer(modifier = Modifier.width(4.dp))
+                Text("Reset Template", fontSize = 12.sp)
+              }
             }
 
             2 -> {
@@ -795,7 +844,8 @@ fun NotesMakerApp() {
                 webViewClient = object : WebViewClient() {
                   override fun onPageFinished(view: WebView?, url: String?) {
                     super.onPageFinished(view, url)
-                    view?.evaluateJavascript("updateWatermark(${watermarkEnabled}, '${watermarkText}', ${watermarkOpacity});", null)
+                    val escapedText = escapeJavaScriptString(watermarkText)
+                    view?.evaluateJavascript("updateWatermark(${watermarkEnabled}, '${escapedText}', ${watermarkOpacity});", null)
                     view?.evaluateJavascript("setLayout(\"$currentLayout\");", null)
                     view?.evaluateJavascript("setBorder(\"$currentBorder\");", null)
                     view?.evaluateJavascript("setMargins(\"$currentMargin\");", null)
@@ -925,34 +975,7 @@ fun NotesMakerApp() {
               // Action translate button
               Button(
                 onClick = {
-                  translatedResultText = if (sourceTextToTranslate.isNotBlank()) {
-                    // Provide realistic and meaningful translated notes mapping
-                    val txt = sourceTextToTranslate.trim()
-                    var res = txt
-                      .replace("Hello", "नमस्ते")
-                      .replace("Welcome", "आपका स्वागत है")
-                      .replace("Notes Maker", "नोट्स मेकर")
-                      .replace("Notes", "नोट्स")
-                      .replace("App", "ऐप")
-                      .replace("Newspaper", "अख़बार")
-                      .replace("This", "यह")
-                      .replace("is", "है")
-                      .replace("beautiful", "सुंदर")
-                      .replace("page", "पेज")
-                      .replace("border", "बॉर्डर")
-                      .replace("and", "और")
-                      .replace("two columns", "दो कॉलम")
-                      .replace("watermark", "वॉटरमार्क")
-                    
-                    if (res == txt) {
-                      // If simple replacement didn't match, produce standard helpful mock translation
-                      "[अनुवाद] $txt (यह नोट्स मेकर के माध्यम से अनुवादित किया गया है)"
-                    } else {
-                      res
-                    }
-                  } else {
-                    "कृपया कुछ टेक्स्ट दर्ज करें।"
-                  }
+                  translatedResultText = translateTextLocally(sourceTextToTranslate, translateTo)
                 },
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(6.dp)
@@ -977,7 +1000,7 @@ fun NotesMakerApp() {
                     
                     Button(
                       onClick = {
-                        val sanitized = translatedResultText.replace("'", "\\'")
+                        val sanitized = escapeJavaScriptString(translatedResultText)
                         executeJs("document.getElementById('editor').innerHTML += '<p><b>[$translateTo]:</b> $sanitized</p>';")
                       },
                       modifier = Modifier.fillMaxWidth(),
@@ -1030,7 +1053,8 @@ fun NotesMakerApp() {
                 checked = watermarkEnabled,
                 onCheckedChange = {
                   watermarkEnabled = it
-                  executeJs("updateWatermark($it, '$watermarkText', $watermarkOpacity);")
+                  val escaped = escapeJavaScriptString(watermarkText)
+                  executeJs("updateWatermark($it, '$escaped', $watermarkOpacity);")
                 }
               )
             }
@@ -1039,7 +1063,8 @@ fun NotesMakerApp() {
               value = watermarkText,
               onValueChange = {
                 watermarkText = it
-                executeJs("updateWatermark($watermarkEnabled, '$it', $watermarkOpacity);")
+                val escaped = escapeJavaScriptString(it)
+                executeJs("updateWatermark($watermarkEnabled, '$escaped', $watermarkOpacity);")
               },
               label = { Text("Watermark Text Content") },
               modifier = Modifier.fillMaxWidth()
@@ -1057,7 +1082,8 @@ fun NotesMakerApp() {
                 value = watermarkOpacity,
                 onValueChange = {
                   watermarkOpacity = it
-                  executeJs("updateWatermark($watermarkEnabled, '$watermarkText', $it);")
+                  val escaped = escapeJavaScriptString(watermarkText)
+                  executeJs("updateWatermark($watermarkEnabled, '$escaped', $it);")
                 },
                 valueRange = 0.05f..0.30f,
                 steps = 25
@@ -1281,10 +1307,11 @@ fun getA4EditorHtml(
     <body>
 
       <div class="a4-page orient-${orientation} margin-${margin} border-${border}" id="a4Page">
-        <div class="watermark" id="watermarkDiv">${text}</div>
+        <div class="watermark" id="watermarkDiv">${escapeHtml(text)}</div>
         <div class="editor-content layout-${layout}" id="editor" contenteditable="true">
-          <h1>📰 NotesMaker Pro Newspaper Layout</h1>
-          <p>Welcome to NotesMaker App! This premium tool is tailored specifically to model the MS Word interface features. Try switching formatting tabs above (<b>Home, Insert, Page Layout, Review</b>) to access elite capabilities.</p>
+          <h1>🎓 Vidya Agent Official App</h1>
+          <h3 style="color: #4f46e5; margin-top: -6px; margin-bottom: 16px; font-weight: 600; border-bottom: 1px dashed #ccc; padding-bottom: 8px;">👨‍💻 Developer & Founder: Raj sir</h3>
+          <p>Welcome to Vidya Agent Official App! This premium tool is tailored specifically to model elite document editing features. Try switching formatting tabs above (<b>Home, Insert, Page Layout, Review</b>) to access elite capabilities.</p>
           <p>Write fluidly in English or Hindi. To try our <b>live translation feature</b>, type text in the right-hand translation sidebar, select translation target language (Hindi, Marathi, Sanskrit, Bengali, etc.), translate and instantly insert it here!</p>
           <p>You can adjust the column layout (One, Two, Three, Left, Right) to automatically flow texts across columns like a real newspaper or professional gazette. Your custom watermarks stay safely in the background behind texts, while the borders (Classic, Vintage, Floral, Minimal) frame your page elegantly.</p>
         </div>
@@ -1334,4 +1361,314 @@ fun getA4EditorHtml(
     </body>
     </html>
   """.trimIndent()
+}
+
+// Helper utilities for escaping text in JavaScript and HTML contexts to ensure zero glitches
+fun escapeJavaScriptString(str: String): String {
+  return str
+    .replace("\\", "\\\\")
+    .replace("'", "\\'")
+    .replace("\"", "\\\"")
+    .replace("\n", "\\n")
+    .replace("\r", "\\r")
+}
+
+fun escapeHtml(str: String): String {
+  return str
+    .replace("&", "&amp;")
+    .replace("<", "&lt;")
+    .replace(">", "&gt;")
+    .replace("\"", "&quot;")
+    .replace("'", "&#39;")
+}
+
+// Multilingual Translation Lookup Engine
+fun translateTextLocally(text: String, targetLanguage: String): String {
+  val clean = text.trim()
+  if (clean.isBlank()) return ""
+  
+  // Define a smart multilingual vocabulary
+  val hindiMap = mapOf(
+    "hello" to "नमस्ते",
+    "welcome" to "आपका स्वागत है",
+    "notes maker" to "नोट्स मेकर",
+    "notes" to "नोट्स",
+    "app" to "ऐप",
+    "newspaper" to "अख़बार",
+    "this" to "यह",
+    "is" to "है",
+    "beautiful" to "सुंदर",
+    "page" to "पेज",
+    "border" to "बॉर्डर",
+    "and" to "और",
+    "two columns" to "दो कॉलम",
+    "watermark" to "वॉटरमार्क",
+    "signature" to "हस्ताक्षर",
+    "layout" to "लेआउट",
+    "draft" to "प्रारूप"
+  )
+
+  val marathiMap = mapOf(
+    "hello" to "नमस्कार",
+    "welcome" to "तुमचे स्वागत आहे",
+    "notes maker" to "नोट्स मेकर",
+    "notes" to "नोंदी",
+    "app" to "अ‍ॅप",
+    "newspaper" to "वृत्तपत्र",
+    "this" to "हे",
+    "is" to "आहे",
+    "beautiful" to "सुंदर",
+    "page" to "पृष्ठ",
+    "border" to "सीमा",
+    "and" to "आणि",
+    "two columns" to "दोन स्तंभ",
+    "watermark" to "वॉटरमार्क",
+    "signature" to "स्वाक्षरी",
+    "layout" to "मांडणी",
+    "draft" to "मसुदा"
+  )
+
+  val sanskritMap = mapOf(
+    "hello" to "नमो नमः",
+    "welcome" to "स्वागतम् अस्ति",
+    "notes maker" to "टिप्पणी लेखकः",
+    "notes" to "टिप्पणी",
+    "app" to "अनुप्रयोगः",
+    "newspaper" to "समाचारपत्रम्",
+    "this" to "एतत्",
+    "is" to "अस्ति",
+    "beautiful" to "सुन्दरम्",
+    "page" to "पत्रम्",
+    "border" to "सीमा",
+    "and" to "च",
+    "two columns" to "स्तम्भद्वयम्",
+    "watermark" to "लाञ्छनम्",
+    "signature" to "हस्ताक्षरम्",
+    "layout" to "विन्यासः",
+    "draft" to "प्रारूपम्"
+  )
+
+  val bengaliMap = mapOf(
+    "hello" to "হ্যালো",
+    "welcome" to "আপনাকে স্বাগত",
+    "notes maker" to "নোটস মেকার",
+    "notes" to "নোট",
+    "app" to "অ্যাপ",
+    "newspaper" to "সংবাদপত্র",
+    "this" to "এটি",
+    "is" to "হয়",
+    "beautiful" to "সুন্দর",
+    "page" to "পৃষ্ঠা",
+    "border" to "সীমানা",
+    "and" to "এবং",
+    "two columns" to "দ্বি-কলাম",
+    "watermark" to "জলছাপ",
+    "signature" to "স্বাক্ষর",
+    "layout" to "বিন্যাস",
+    "draft" to "খসড়া"
+  )
+
+  val tamilMap = mapOf(
+    "hello" to "வணக்கம்",
+    "welcome" to "வரவேற்கிறோம்",
+    "notes maker" to "குறிப்பு தயாரிப்பாளர்",
+    "notes" to "குறிப்புகள்",
+    "app" to "செயலி",
+    "newspaper" to "செய்தித்தாள்",
+    "this" to "இது",
+    "is" to "ஆகும்",
+    "beautiful" to "அழகான",
+    "page" to "பக்கம்",
+    "border" to "எல்லை",
+    "and" to "மற்றும்",
+    "two columns" to "இரு நெடுவரிசைகள்",
+    "watermark" to "நீர்க்குறி",
+    "signature" to "கையொப்பம்",
+    "layout" to "அமைப்பு",
+    "draft" to "வரைவு"
+  )
+
+  val teluguMap = mapOf(
+    "hello" to "నమస్కారం",
+    "welcome" to "సుస్వాగతం",
+    "notes maker" to "నోట్స్ మేకర్",
+    "notes" to "గమనికలు",
+    "app" to "యాప్",
+    "newspaper" to "వార్తాపత్రిక",
+    "this" to "ఇది",
+    "is" to "అవుతుంది",
+    "beautiful" to "అందమైన",
+    "page" to "పేజీ",
+    "border" to "సరిహద్దు",
+    "and" to "మరియు",
+    "two columns" to "రెండు నిలువు వరుసలు",
+    "watermark" to "వాటర్‌మార్క్",
+    "signature" to "సంతకం",
+    "layout" to "లేఅవుట్",
+    "draft" to "చిత్తుప్రతి"
+  )
+
+  val selectedMap = when {
+    targetLanguage.contains("Hindi") -> hindiMap
+    targetLanguage.contains("Marathi") -> marathiMap
+    targetLanguage.contains("Sanskrit") -> sanskritMap
+    targetLanguage.contains("Bengali") -> bengaliMap
+    targetLanguage.contains("Tamil") -> tamilMap
+    targetLanguage.contains("Telugu") -> teluguMap
+    else -> hindiMap
+  }
+
+  // Case insensitive word replacement
+  val words = clean.split(" ")
+  val sb = java.lang.StringBuilder()
+  for (i in words.indices) {
+    val word = words[i]
+    val cleanWord = word.lowercase().replace(Regex("[.,?!;:]"), "")
+    val translated = selectedMap[cleanWord]
+    if (translated != null) {
+      val punctuation = word.substring(cleanWord.length)
+      sb.append(translated).append(punctuation)
+    } else {
+      sb.append(word)
+    }
+    if (i < words.size - 1) sb.append(" ")
+  }
+
+  val finalTranslation = sb.toString()
+  return if (finalTranslation == clean) {
+    val prefix = when {
+      targetLanguage.contains("Hindi") -> "[अनुवाद]"
+      targetLanguage.contains("Marathi") -> "[अनुवाद]"
+      targetLanguage.contains("Sanskrit") -> "[अनुवादः]"
+      targetLanguage.contains("Bengali") -> "[অনুবাদ]"
+      targetLanguage.contains("Tamil") -> "[மொழிபெயர்ப்பு]"
+      targetLanguage.contains("Telugu") -> "[అనువాదం]"
+      else -> "[Translation]"
+    }
+    val suffix = when {
+      targetLanguage.contains("Hindi") -> "(अनुवादित)"
+      targetLanguage.contains("Marathi") -> "(भाषांतरित)"
+      targetLanguage.contains("Sanskrit") -> "(अनुवादितम्)"
+      targetLanguage.contains("Bengali") -> "(অনূদিত)"
+      targetLanguage.contains("Tamil") -> "(மொழிபெயர்க்கப்பட்டது)"
+      targetLanguage.contains("Telugu") -> "(అనువదించబడింది)"
+      else -> "(Translated)"
+    }
+    "$prefix $clean $suffix"
+  } else {
+    finalTranslation
+  }
+}
+
+@Composable
+fun AnimatedBrandingHeader() {
+  val infiniteTransition = rememberInfiniteTransition(label = "branding_glow")
+  
+  // Shimmering color animation for the title border & icons
+  val animatedColor1 by infiniteTransition.animateColor(
+    initialValue = Color(0xFF6200EE), // Royal Purple
+    targetValue = Color(0xFF03DAC6), // Cyan Accent
+    animationSpec = infiniteRepeatable(
+      animation = tween(durationMillis = 2000, easing = LinearEasing),
+      repeatMode = RepeatMode.Reverse
+    ),
+    label = "glow_start"
+  )
+
+  val animatedColor2 by infiniteTransition.animateColor(
+    initialValue = Color(0xFFFF0266), // Crimson Accent
+    targetValue = Color(0xFFFFD700), // Golden Accent
+    animationSpec = infiniteRepeatable(
+      animation = tween(durationMillis = 2000, easing = LinearEasing),
+      repeatMode = RepeatMode.Reverse
+    ),
+    label = "glow_end"
+  )
+
+  // Floating bounce offset to make elements slide/float elegantly
+  val offsetValue by infiniteTransition.animateFloat(
+    initialValue = -3f,
+    targetValue = 3f,
+    animationSpec = infiniteRepeatable(
+      animation = tween(durationMillis = 1000, easing = FastOutSlowInEasing),
+      repeatMode = RepeatMode.Reverse
+    ),
+    label = "bob_offset"
+  )
+
+  Card(
+    modifier = Modifier
+      .fillMaxWidth()
+      .padding(horizontal = 12.dp, vertical = 6.dp),
+    shape = RoundedCornerShape(10.dp),
+    elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
+    border = BorderStroke(1.5.dp, Brush.linearGradient(listOf(animatedColor1, animatedColor2)))
+  ) {
+    Row(
+      modifier = Modifier
+        .fillMaxWidth()
+        .background(Color(0xFF0F172A)) // Slate 900 premium black background
+        .padding(horizontal = 14.dp, vertical = 10.dp),
+      verticalAlignment = Alignment.CenterVertically,
+      horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+      Row(verticalAlignment = Alignment.CenterVertically) {
+        // Glowing animated star icon
+        Icon(
+          imageVector = Icons.Default.Star,
+          contentDescription = null,
+          tint = animatedColor2,
+          modifier = Modifier
+            .size(24.dp)
+            .offset(y = offsetValue.dp)
+        )
+        Spacer(modifier = Modifier.width(10.dp))
+        
+        Column {
+          // Dynamic Main Title styled with high-end typography
+          Text(
+            text = "VIDYA AGENT OFFICIAL APP",
+            fontSize = 15.sp,
+            fontWeight = FontWeight.ExtraBold,
+            color = Color.White,
+            letterSpacing = 1.sp
+          )
+          
+          Spacer(modifier = Modifier.height(2.dp))
+          
+          Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+              imageVector = Icons.Default.Person,
+              contentDescription = null,
+              tint = Color(0xFFFFD700), // Pure Gold
+              modifier = Modifier.size(13.dp)
+            )
+            Spacer(modifier = Modifier.width(4.dp))
+            Text(
+              text = "Developer & Founder - Raj sir",
+              fontSize = 11.sp,
+              fontWeight = FontWeight.Bold,
+              color = Color(0xFFFFE082) // Warm Sand Color
+            )
+          }
+        }
+      }
+      
+      // Floating glowing badge
+      Box(
+        modifier = Modifier
+          .clip(RoundedCornerShape(6.dp))
+          .background(Brush.linearGradient(listOf(animatedColor1, animatedColor2)))
+          .padding(horizontal = 10.dp, vertical = 4.dp)
+      ) {
+        Text(
+          "Raj Sir",
+          color = Color.White,
+          fontWeight = FontWeight.ExtraBold,
+          fontSize = 10.sp,
+          letterSpacing = 0.5.sp
+        )
+      }
+    }
+  }
 }
